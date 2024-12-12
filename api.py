@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask
+from flask_sock import Sock
 from flask_cors import CORS
 import json
 import ollama
@@ -7,6 +8,7 @@ from rhea import ChatManager, ConfigManager, Message, CharacterProfile
 
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 
 # Initialize managers as global objects
 config_manager = ConfigManager()
@@ -15,49 +17,61 @@ chat_manager = ChatManager(
     context_limit=config_manager.config.context_limit
 )
 
-@app.route('/api/chat', methods=['POST'])
-def chat():
-    data = request.json
-    message = data.get('message', '')
-    should_stream = data.get('stream', True)  # Renamed from 'stream' to 'should_stream'
+@sock.route('/ws')
+def chat(ws):
+    # Initialize character profiles
+    chat_manager.set_current_profiles("user", "assistant")
+    
+    # Force reinitialize the conversation with full character context
+    chat_manager.conversation = []  # Clear any existing conversation
+    system_message = chat_manager._create_system_message()  # Create fresh system message with full context
+    chat_manager.conversation = [system_message]  # Set as first message
+    
+    # Send initial profile confirmation
+    ws.send(json.dumps({
+        'system': f"Chat initialized. You are {chat_manager.current_user_profile.name}, speaking with {chat_manager.current_assistant_profile.name}"
+    }))
+    
+    while True:
+        data = json.loads(ws.receive())
+        message = data.get('message', '')
 
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
+        if not message:
+            ws.send(json.dumps({"error": "Message is required"}))
+            continue
 
-    def generate_response() -> Iterator[str]:
-        chat_manager.add_to_conversation("user", message)
         try:
-            ollama_stream = ollama.chat(  # Renamed from 'stream' to 'ollama_stream'
+            # Format message with character name
+            user_message = f"{chat_manager.current_user_profile.name}:\n{message}"
+            chat_manager.add_to_conversation("user", user_message)
+
+            # Ensure system message is always first
+            if not chat_manager.conversation[0]['role'] == 'system':
+                chat_manager.conversation.insert(0, system_message)
+
+            ollama_stream = ollama.chat(
                 model=config_manager.config.model_name,
                 messages=chat_manager.conversation,
                 options={"num_ctx": config_manager.config.context_limit},
                 stream=True,
             )
             
-            response_content = []
+            full_response = []
             for chunk in ollama_stream:
                 chunk_content = chunk['message']['content']
-                response_content.append(chunk_content)
-                if should_stream:  # Use should_stream instead of stream
-                    yield f"data: {json.dumps({'chunk': chunk_content})}\n\n"
+                full_response.append(chunk_content)
+                ws.send(json.dumps({
+                    'chunk': chunk_content,
+                    'character': chat_manager.current_assistant_profile.name
+                }))
             
-            full_response = ''.join(response_content)
-            chat_manager.add_to_conversation("assistant", full_response)
+            # Store the complete response with character name
+            complete_response = ''.join(full_response)
+            assistant_message = f"{chat_manager.current_assistant_profile.name}:\n{complete_response}"
+            chat_manager.add_to_conversation("assistant", assistant_message)
             
-            if not should_stream:
-                yield f"data: {json.dumps({'response': full_response})}\n\n"
-                
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-    if should_stream:  # Use should_stream instead of stream
-        return Response(
-            stream_with_context(generate_response()),
-            mimetype='text/event-stream'
-        )
-    else:
-        response = "".join(generate_response())
-        return jsonify({"response": response})
+            ws.send(json.dumps({'error': str(e)}))
 
 @app.route('/api/config', methods=['GET', 'PUT'])
 def handle_config():
@@ -121,5 +135,21 @@ def handle_events():
     chat_manager.add_key_event(event)
     return jsonify({"message": "Event added", "events": chat_manager.key_events})
 
+# Add a new endpoint to get current character information
+@app.route('/api/characters/current', methods=['GET'])
+def get_current_characters():
+    return jsonify({
+        'assistant': {
+            'name': chat_manager.current_assistant_profile.name,
+            'traits': chat_manager.current_assistant_profile.traits,
+            'personality': chat_manager.current_assistant_profile.personality
+        } if chat_manager.current_assistant_profile else None,
+        'user': {
+            'name': chat_manager.current_user_profile.name,
+            'traits': chat_manager.current_user_profile.traits,
+            'personality': chat_manager.current_user_profile.personality
+        } if chat_manager.current_user_profile else None
+    })
+
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=True, port=3000, host='0.0.0.0') 
