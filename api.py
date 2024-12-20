@@ -19,6 +19,8 @@ chat_manager = ChatManager(
 
 @sock.route('/ws')
 def chat(ws):
+    fast_mode = False  # Initialize fast mode flag
+    
     # Initialize character profiles
     chat_manager.set_current_profiles("user", "assistant")
     
@@ -35,6 +37,14 @@ def chat(ws):
     while True:
         data = json.loads(ws.receive())
         message = data.get('message', '')
+
+        # Handle fast mode toggle
+        if data.get('toggle_fast_mode') is not None:
+            fast_mode = data['toggle_fast_mode']
+            ws.send(json.dumps({
+                'system': f"Fast mode {'enabled' if fast_mode else 'disabled'}"
+            }))
+            continue
 
         if not message:
             ws.send(json.dumps({"error": "Message is required"}))
@@ -149,6 +159,64 @@ def get_current_characters():
             'traits': chat_manager.current_user_profile.traits,
             'personality': chat_manager.current_user_profile.personality
         } if chat_manager.current_user_profile else None
+    })
+
+@app.route('/api/clear', methods=['POST'])
+def clear_conversation():
+    try:
+        # Reset the conversation to just the system message
+        chat_manager.conversation = []
+        system_message = chat_manager._create_system_message()
+        chat_manager.conversation = [system_message]
+        
+        return jsonify({
+            "message": "Conversation history cleared",
+            "status": "success"
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "status": "error"
+        }), 500
+
+# Add these new routes for context management
+@app.route('/api/context/status', methods=['GET'])
+def get_context_status():
+    total_tokens = sum(len(msg['content'].split()) for msg in chat_manager.conversation)
+    return jsonify({
+        "total_tokens": total_tokens,
+        "context_limit": config_manager.config.context_limit,
+        "usage_percentage": (total_tokens / config_manager.config.context_limit) * 100
+    })
+
+@app.route('/api/context/trim', methods=['POST'])
+def trim_context():
+    data = request.json
+    target_percentage = data.get('target_percentage', 50)
+    
+    # Keep system message and calculate target token count
+    system_message = chat_manager.conversation[0]
+    target_tokens = (config_manager.config.context_limit * target_percentage) / 100
+    
+    # Start fresh with system message
+    new_conversation = [system_message]
+    current_tokens = len(system_message['content'].split())
+    
+    # Add messages from the end (most recent) until we hit target
+    for message in reversed(chat_manager.conversation[1:]):
+        message_tokens = len(message['content'].split())
+        if current_tokens + message_tokens <= target_tokens:
+            new_conversation.insert(1, message)  # Insert after system message
+            current_tokens += message_tokens
+        else:
+            break
+    
+    chat_manager.conversation = new_conversation
+    
+    return jsonify({
+        "message": "Context trimmed successfully",
+        "remaining_messages": len(chat_manager.conversation),
+        "current_usage_percentage": (current_tokens / config_manager.config.context_limit) * 100
     })
 
 if __name__ == '__main__':

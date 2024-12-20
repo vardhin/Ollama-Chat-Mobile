@@ -1,7 +1,7 @@
 <script>
     import { onMount } from 'svelte';
     import { fade } from 'svelte/transition';
-    import { Send, Maximize2, Minimize2 } from 'lucide-svelte';
+    import { Send, Maximize2, Minimize2, Menu, XCircle, RotateCcw, Zap, ZapOff, Moon } from 'lucide-svelte';
 
     let messages = [];
     let inputMessage = '';
@@ -9,6 +9,12 @@
     let isLoading = false;
     let socket;
     let isFullscreen = false;
+    let isFirstChunk = true;
+    let pendingAssistantName = '';
+    let isSidebarOpen = false;
+    let contextStatus = { total_tokens: 0, context_limit: 0, usage_percentage: 0 };
+    let fastMode = false;
+    let isOledMode = false;
 
     // Add title
     const title = "Rhea";
@@ -50,7 +56,22 @@
 
                 if (data.chunk) {
                     const lastMessage = messages[messages.length - 1];
-                    lastMessage.content += data.chunk;
+                    let chunk = data.chunk;
+                    
+                    // Handle assistant name across chunks
+                    if (isFirstChunk) {
+                        pendingAssistantName = chunk;
+                        isFirstChunk = false;
+                        return;
+                    } else if (chunk === ':') {
+                        isFirstChunk = false;
+                        return;
+                    }
+                    
+                    // Replace double asterisks with single asterisk
+                    chunk = chunk.replace(/\*\*/g, '*');
+                    
+                    lastMessage.content += chunk;
                     messages = messages;
                     
                     // Scroll while streaming only if near bottom
@@ -65,8 +86,10 @@
                     }
                 }
 
-                // If we receive an empty chunk, it's the end of the stream
+                // Reset the first chunk flag when stream ends
                 if (data.chunk === '') {
+                    isFirstChunk = true;
+                    pendingAssistantName = '';
                     isLoading = false;
                 }
             };
@@ -88,6 +111,12 @@
         }
 
         connectWebSocket();
+        updateContextStatus();
+        const statusInterval = setInterval(updateContextStatus, 10000); // Update every 10 seconds
+
+        return () => {
+            clearInterval(statusInterval);
+        };
     });
 
     async function sendMessage() {
@@ -161,24 +190,135 @@
                 .catch(err => console.error(err));
         }
     }
+
+    // Add function to fetch context status
+    async function updateContextStatus() {
+        try {
+            const response = await fetch('/api/context/status');
+            contextStatus = await response.json();
+        } catch (error) {
+            console.error('Failed to fetch context status:', error);
+        }
+    }
+
+    // Add function to clear context
+    async function clearContext() {
+        try {
+            await fetch('/api/clear', { method: 'POST' });
+            messages = [];
+            updateContextStatus();
+        } catch (error) {
+            console.error('Failed to clear context:', error);
+        }
+    }
+
+    // Add function to toggle fast mode
+    function toggleFastMode() {
+        fastMode = !fastMode;
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ toggle_fast_mode: fastMode }));
+        }
+    }
+
+    // Add function to toggle OLED mode
+    function toggleOledMode() {
+        isOledMode = !isOledMode;
+        document.documentElement.classList.toggle('oled-mode');
+    }
 </script>
 
 <div class="app-container">
     <header class="top-bar">
-        <h1>{title}</h1>
-        <button 
-            class="fullscreen-btn" 
-            on:click={toggleFullscreen} 
-            aria-label="Toggle fullscreen"
-        >
-            {#if isFullscreen}
-                <Minimize2 size={20} />
-            {:else}
-                <Maximize2 size={20} />
-            {/if}
-        </button>
+        <div class="left-section">
+            <button 
+                class="menu-btn" 
+                on:click={() => isSidebarOpen = !isSidebarOpen}
+                aria-label="Toggle menu"
+            >
+                <Menu size={20} />
+            </button>
+            <h1>{title}</h1>
+        </div>
+        <div class="right-section">
+            <button 
+                class="icon-btn" 
+                on:click={toggleOledMode}
+                aria-label="Toggle OLED mode"
+            >
+                <Moon size={20} />
+            </button>
+            <button 
+                class="icon-btn" 
+                on:click={clearContext}
+                aria-label="Clear context"
+            >
+                <RotateCcw size={20} />
+            </button>
+            <button 
+                class="fullscreen-btn" 
+                on:click={toggleFullscreen} 
+                aria-label="Toggle fullscreen"
+            >
+                {#if isFullscreen}
+                    <Minimize2 size={20} />
+                {:else}
+                    <Maximize2 size={20} />
+                {/if}
+            </button>
+        </div>
     </header>
-    
+
+    <!-- Add sidebar -->
+    {#if isSidebarOpen}
+        <div class="sidebar" transition:fade={{ duration: 200 }}>
+            <div class="sidebar-header">
+                <h2>Settings</h2>
+                <button 
+                    class="close-btn" 
+                    on:click={() => isSidebarOpen = false}
+                    aria-label="Close sidebar"
+                >
+                    <XCircle size={20} />
+                </button>
+            </div>
+            <div class="sidebar-content">
+                <div class="context-info">
+                    <h3>Context Usage</h3>
+                    <div class="progress-bar">
+                        <div 
+                            class="progress" 
+                            style="width: {contextStatus.usage_percentage}%"
+                        ></div>
+                    </div>
+                    <p>{Math.round(contextStatus.total_tokens)} / {contextStatus.context_limit} tokens</p>
+                </div>
+                <div class="mode-toggle">
+                    <h3>Fast Mode</h3>
+                    <button 
+                        class="toggle-btn {fastMode ? 'active' : ''}" 
+                        on:click={toggleFastMode}
+                    >
+                        {#if fastMode}
+                            <Zap size={20} />
+                        {:else}
+                            <ZapOff size={20} />
+                        {/if}
+                        {fastMode ? 'Enabled' : 'Disabled'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    {/if}
+
+    <!-- Add overlay when sidebar is open -->
+    {#if isSidebarOpen}
+        <div 
+            class="overlay" 
+            on:click={() => isSidebarOpen = false}
+            transition:fade={{ duration: 200 }}
+        ></div>
+    {/if}
+
     <div class="chat-container">
         <div class="messages" bind:this={chatContainer}>
             {#each messages as message (message.id)}
@@ -224,7 +364,7 @@
 
     :global(body) {
         margin: 0;
-        background-color: #1a1b1e;
+        background-color: #151a23;
         color: #e0e1e2;
         font-family: 'Quicksand', sans-serif;
         scroll-behavior: smooth;
@@ -240,6 +380,20 @@
         display: none;
     }
 
+    :root {
+        --container-bg: #151a23;
+        --user-msg-bg: #00957d;
+        --user-msg-shadow: 0 0 15px rgba(0, 149, 125, 0.3);
+        --input-bg: #1b2531;
+    }
+
+    :global(.oled-mode) {
+        --container-bg: #000000;
+        --user-msg-bg: #006857;
+        --user-msg-shadow: 0 0 10px rgba(0, 104, 87, 0.15);
+        --input-bg: #131920;
+    }
+
     .app-container {
         height: 100dvh;
         display: flex;
@@ -248,6 +402,7 @@
         width: 100%;
         left: 0;
         top: 0;
+        background-color: var(--container-bg);
     }
 
     .top-bar {
@@ -258,7 +413,7 @@
         background: transparent;
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
-        padding: 1rem 2rem;
+        padding: 0.5rem 2rem;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         z-index: 10;
         display: flex;
@@ -268,7 +423,7 @@
 
     .top-bar h1 {
         margin: 0;
-        font-size: 1.5rem;
+        font-size: 1.1rem;
         font-weight: 600;
         color: #fff;
     }
@@ -280,11 +435,12 @@
         padding: 0 1rem;
         width: 100%;
         box-sizing: border-box;
-        padding-top: 4rem;
+        padding-top: 3rem;
         padding-bottom: 5rem;
         position: relative;
         height: 100%;
         overflow: hidden;
+        background-color: var(--container-bg);
     }
 
     .messages {
@@ -293,7 +449,7 @@
         display: flex;
         flex-direction: column;
         gap: 1rem;
-        background-color: #1a1b1e;
+        background-color: inherit;
         border-radius: 0.75rem;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
@@ -329,14 +485,14 @@
     }
 
     .user .message-content {
-        background-color: #00957d;
+        background-color: var(--user-msg-bg);
         color: #f0fff4;
         border-bottom-right-radius: 0.25rem;
-        box-shadow: 0 0 15px rgba(0, 149, 125, 0.3);
+        box-shadow: var(--user-msg-shadow);
     }
 
     .assistant .message-content {
-        background-color: #2c2d31;
+        background-color: var(--input-bg);
         color: #e0e1e2;
         border-bottom-left-radius: 0.25rem;
     }
@@ -373,9 +529,9 @@
         min-height: 24px;
         max-height: 90px;
         padding: 10px 16px;
-        background-color: #1a1b1e;
+        background-color: var(--input-bg);
         color: #e0e1e2;
-        border: 1px solid #383a3f;
+        border: 1px solid #2a3441;
         border-radius: 22px;
         resize: none;
         font-family: 'Quicksand', sans-serif;
@@ -441,7 +597,7 @@
     @media (max-width: 768px) {
         .top-bar {
             position: absolute;
-            padding: 0.75rem 1rem;
+            padding: 0.4rem 1rem;
         }
 
         .input-container {
@@ -465,7 +621,7 @@
     /* Additional styles for very small screens */
     @media (max-width: 380px) {
         .chat-container {
-            padding-top: calc(4rem + 0.3rem);
+            padding-top: calc(3rem + 0.3rem);
             padding-bottom: calc(5rem + 0.3rem);
         }
 
@@ -484,13 +640,159 @@
         align-items: center;
         justify-content: center;
         transition: color 0.2s;
-        width: 2.5rem;
-        height: 2.5rem;
+        width: 2.2rem;
+        height: 2.2rem;
         border-radius: 0.5rem;
     }
 
     .fullscreen-btn:hover {
         color: #fff;
         background: rgba(255, 255, 255, 0.1);
+    }
+
+    .left-section {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .right-section {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .menu-btn, .icon-btn {
+        background: transparent;
+        border: none;
+        color: #e0e1e2;
+        padding: 0.5rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
+        width: 2.2rem;
+        height: 2.2rem;
+        border-radius: 0.5rem;
+    }
+
+    .menu-btn:hover, .icon-btn:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 260px;
+        background: #18191c;
+        z-index: 100;
+        padding: 1rem;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .sidebar-header {
+        position: sticky;
+        top: 0;
+        background: #151a23;
+        padding: 0.5rem 0;
+        margin-bottom: 1.5rem;
+        z-index: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .sidebar-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+        padding-bottom: 5rem;
+        min-height: min-content;
+    }
+
+    .overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 90;
+        backdrop-filter: blur(3px);
+    }
+
+    .context-info h3, .mode-toggle h3 {
+        margin: 0 0 1rem 0;
+        font-size: 1rem;
+        font-weight: 500;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 6px;
+        background: #2c2d31;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 0.5rem;
+    }
+
+    .progress {
+        height: 100%;
+        background: #00957d;
+        transition: width 0.3s ease;
+    }
+
+    .toggle-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        background: #1b2531;
+        border: none;
+        color: #e0e1e2;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .toggle-btn.active {
+        background: #00957d;
+        color: #fff;
+    }
+
+    .close-btn {
+        background: transparent;
+        border: none;
+        color: #e0e1e2;
+        cursor: pointer;
+        padding: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 0.5rem;
+    }
+
+    .close-btn:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    @media (max-width: 768px) {
+        .sidebar {
+            width: 240px;
+            height: 100dvh;
+        }
     }
 </style>
