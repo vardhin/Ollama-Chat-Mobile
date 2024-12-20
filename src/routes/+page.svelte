@@ -1,12 +1,14 @@
 <script>
     import { onMount } from 'svelte';
     import { fade } from 'svelte/transition';
+    import { Send, Maximize2, Minimize2 } from 'lucide-svelte';
 
     let messages = [];
     let inputMessage = '';
     let chatContainer;
     let isLoading = false;
     let socket;
+    let isFullscreen = false;
 
     // Add title
     const title = "Rhea";
@@ -147,11 +149,34 @@
         // Restore scroll position
         textarea.scrollTop = scrollPos;
     }
+
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen()
+                .then(() => isFullscreen = true)
+                .catch(err => console.error(err));
+        } else {
+            document.exitFullscreen()
+                .then(() => isFullscreen = false)
+                .catch(err => console.error(err));
+        }
+    }
 </script>
 
 <div class="app-container">
     <header class="top-bar">
         <h1>{title}</h1>
+        <button 
+            class="fullscreen-btn" 
+            on:click={toggleFullscreen} 
+            aria-label="Toggle fullscreen"
+        >
+            {#if isFullscreen}
+                <Minimize2 size={20} />
+            {:else}
+                <Maximize2 size={20} />
+            {/if}
+        </button>
     </header>
     
     <div class="chat-container">
@@ -187,7 +212,7 @@
                 on:click={sendMessage} 
                 disabled={isLoading || !inputMessage.trim()}
             >
-                Send
+                <Send size={20} />
             </button>
         </div>
     </div>
@@ -216,9 +241,13 @@
     }
 
     .app-container {
-        height: 100vh;
+        height: 100dvh;
         display: flex;
         flex-direction: column;
+        position: fixed;
+        width: 100%;
+        left: 0;
+        top: 0;
     }
 
     .top-bar {
@@ -226,12 +255,15 @@
         top: 0;
         left: 0;
         right: 0;
-        background: rgba(44, 45, 49, 0.4);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
+        background: transparent;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         padding: 1rem 2rem;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         z-index: 10;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
 
     .top-bar h1 {
@@ -248,12 +280,15 @@
         padding: 0 1rem;
         width: 100%;
         box-sizing: border-box;
-        padding-top: calc(4rem + 1rem); /* Increased padding-top */
-        padding-bottom: calc(5rem + 1rem); /* Increased padding-bottom */
+        padding-top: 4rem;
+        padding-bottom: 5rem;
+        position: relative;
+        height: 100%;
+        overflow: hidden;
     }
 
     .messages {
-        height: calc(100vh - 10rem); /* Decreased height by increasing subtraction */
+        height: 100%;
         padding: 1rem;
         display: flex;
         flex-direction: column;
@@ -261,9 +296,8 @@
         background-color: #1a1b1e;
         border-radius: 0.75rem;
         overflow-y: auto;
-        scroll-behavior: smooth;
-        scrollbar-width: none;
-        -ms-overflow-style: none;
+        -webkit-overflow-scrolling: touch;
+        position: relative;
     }
 
     .messages::-webkit-scrollbar {
@@ -290,12 +324,15 @@
         max-width: 80%;
         font-size: 0.95rem;
         line-height: 1.5;
+        word-wrap: break-word;
+        white-space: pre-wrap;
     }
 
     .user .message-content {
-        background-color: #2563eb;
-        color: white;
+        background-color: #00957d;
+        color: #f0fff4;
         border-bottom-right-radius: 0.25rem;
+        box-shadow: 0 0 15px rgba(0, 149, 125, 0.3);
     }
 
     .assistant .message-content {
@@ -309,15 +346,16 @@
         bottom: 0;
         left: 0;
         right: 0;
-        background: rgba(44, 45, 49, 0.4);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
+        background: transparent;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         padding: 1rem 1.5rem;
         z-index: 10;
         display: flex;
         gap: 0.75rem;
-        align-items: flex-end;
+        align-items: center;
+        justify-content: center;
     }
 
     /* Center the input container content */
@@ -331,46 +369,49 @@
 
     textarea {
         flex: 1;
+        height: 24px;
         min-height: 24px;
-        max-height: 90px; /* Reduced to 3 lines */
-        padding: 0.75rem;
+        max-height: 90px;
+        padding: 10px 16px;
         background-color: #1a1b1e;
         color: #e0e1e2;
         border: 1px solid #383a3f;
-        border-radius: 0.5rem;
+        border-radius: 22px;
         resize: none;
         font-family: 'Quicksand', sans-serif;
         font-size: 0.95rem;
         line-height: 1.5;
-        transition: border-color 0.2s, height 0.15s ease-out;
+        transition: all 0.2s ease;
         overflow-y: auto;
+        -webkit-appearance: none;
+        appearance: none;
     }
 
     textarea:focus {
         outline: none;
-        border-color: #2563eb;
+        border-color: #00957d;
+        box-shadow: 0 0 10px rgba(0, 149, 125, 0.2);
     }
 
     button {
-        padding: 0.75rem 1.5rem;
-        background-color: #2563eb;
+        padding: 0;
+        min-width: 44px;
+        height: 44px;
+        background-color: #00957d;
         color: white;
         border: none;
-        border-radius: 0.5rem;
-        font-size: 0.95rem;
-        font-weight: 500;
+        border-radius: 50%;
         cursor: pointer;
-        transition: all 0.2s;
-        font-family: 'Quicksand', sans-serif;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     button:hover:not(:disabled) {
-        background-color: #1d4ed8;
-    }
-
-    button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
+        background-color: #007d69;
+        box-shadow: 0 0 10px rgba(0, 149, 125, 0.3);
+        transform: scale(1.05);
     }
 
     .loading-indicator {
@@ -399,21 +440,25 @@
     /* Update mobile styles */
     @media (max-width: 768px) {
         .top-bar {
+            position: absolute;
             padding: 0.75rem 1rem;
         }
 
-        .chat-container {
-            padding-top: calc(4rem + 0.5rem);
-            padding-bottom: calc(5rem + 0.5rem);
-        }
-
         .input-container {
+            position: absolute;
             padding: 0.8rem;
         }
 
-        .messages {
-            padding: 0.75rem;
-            gap: 0.75rem;
+        textarea {
+            -webkit-appearance: none;
+            appearance: none;
+            font-size: 16px;
+        }
+
+        .fullscreen-btn {
+            font-size: 1.25rem;
+            width: 2rem;
+            height: 2rem;
         }
     }
 
@@ -427,5 +472,25 @@
         .input-container {
             padding: 0.6rem;
         }
+    }
+
+    .fullscreen-btn {
+        background: transparent;
+        border: none;
+        color: #e0e1e2;
+        padding: 0.5rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
+        width: 2.5rem;
+        height: 2.5rem;
+        border-radius: 0.5rem;
+    }
+
+    .fullscreen-btn:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
     }
 </style>
