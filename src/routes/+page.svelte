@@ -55,7 +55,6 @@
                 }
 
                 if (data.chunk) {
-                    const lastMessage = messages[messages.length - 1];
                     let chunk = data.chunk;
                     
                     // Handle assistant name across chunks
@@ -71,8 +70,12 @@
                     // Replace double asterisks with single asterisk
                     chunk = chunk.replace(/\*\*/g, '*');
                     
-                    lastMessage.content += chunk;
-                    messages = messages;
+                    // Create new message for each chunk instead of appending
+                    messages = [...messages, {
+                        id: Date.now().toString(),
+                        role: 'assistant',
+                        content: chunk
+                    }];
                     
                     // Scroll while streaming only if near bottom
                     const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
@@ -137,10 +140,6 @@
 
         scrollToBottom();
 
-        // Add assistant message placeholder
-        const assistantMessageId = (Date.now() + 1).toString();
-        messages = [...messages, { id: assistantMessageId, role: 'assistant', content: '' }];
-
         // Send message through WebSocket
         socket.send(JSON.stringify({ message: userMessage }));
     }
@@ -160,9 +159,6 @@
         const lineHeight = 24;
         const padding = 12; // 0.75rem converted to pixels
         
-        // Store the current scroll position
-        const scrollPos = textarea.scrollTop;
-        
         // Reset height to auto to get proper scrollHeight
         textarea.style.height = 'auto';
         
@@ -175,8 +171,10 @@
         // Set the new height
         textarea.style.height = `${totalHeight}px`;
         
-        // Restore scroll position
-        textarea.scrollTop = scrollPos;
+        // Ensure cursor visibility by scrolling to the bottom of textarea
+        requestAnimationFrame(() => {
+            textarea.scrollTop = textarea.scrollHeight;
+        });
     }
 
     function toggleFullscreen() {
@@ -225,6 +223,26 @@
         isOledMode = !isOledMode;
         document.documentElement.classList.toggle('oled-mode');
     }
+
+    // Add new function to handle input focus
+    function handleInputFocus() {
+        if (isFullscreen) {
+            const inputContainer = document.querySelector('.input-container');
+            if (inputContainer) {
+                inputContainer.style.transform = 'translateY(-41.5vh)';
+            }
+        }
+    }
+
+    // Add new function to handle input blur
+    function handleInputBlur() {
+        if (isFullscreen) {
+            const inputContainer = document.querySelector('.input-container');
+            if (inputContainer) {
+                inputContainer.style.transform = 'translateY(0)';
+            }
+        }
+    }
 </script>
 
 <div class="app-container">
@@ -246,13 +264,6 @@
                 aria-label="Toggle OLED mode"
             >
                 <Moon size={20} />
-            </button>
-            <button 
-                class="icon-btn" 
-                on:click={clearContext}
-                aria-label="Clear context"
-            >
-                <RotateCcw size={20} />
             </button>
             <button 
                 class="fullscreen-btn" 
@@ -291,6 +302,14 @@
                         ></div>
                     </div>
                     <p>{Math.round(contextStatus.total_tokens)} / {contextStatus.context_limit} tokens</p>
+                    <button 
+                        class="sidebar-btn" 
+                        on:click={clearContext}
+                        aria-label="Clear context"
+                    >
+                        <RotateCcw size={20} />
+                        Clear Context
+                    </button>
                 </div>
                 <div class="mode-toggle">
                     <h3>Fast Mode</h3>
@@ -345,6 +364,8 @@
                 bind:value={inputMessage}
                 on:keydown={handleKeydown}
                 on:input={adjustTextareaHeight}
+                on:focus={handleInputFocus}
+                on:blur={handleInputBlur}
                 placeholder="Type a message..."
                 rows="1"
             />
@@ -414,7 +435,7 @@
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
         padding: 0.5rem 2rem;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: none;
         z-index: 10;
         display: flex;
         justify-content: space-between;
@@ -475,13 +496,14 @@
     }
 
     .message-content {
-        padding: 0.8rem 1rem;
+        padding: 0.5rem 0.75rem;
         border-radius: 1rem;
         max-width: 80%;
         font-size: 0.95rem;
         line-height: 1.5;
-        word-wrap: break-word;
+        word-wrap: normal;
         white-space: pre-wrap;
+        word-break: normal;
     }
 
     .user .message-content {
@@ -499,19 +521,21 @@
 
     .input-container {
         position: fixed;
-        bottom: 0;
+        bottom: env(safe-area-inset-bottom, 0px);
         left: 0;
         right: 0;
         background: transparent;
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-top: none;
         padding: 1rem 1.5rem;
         z-index: 10;
         display: flex;
         gap: 0.75rem;
         align-items: center;
         justify-content: center;
+        transform: translateY(0);
+        transition: transform 0.3s ease;
     }
 
     /* Center the input container content */
@@ -528,7 +552,7 @@
         height: 24px;
         min-height: 24px;
         max-height: 90px;
-        padding: 10px 16px;
+        padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)) 16px;
         background-color: var(--input-bg);
         color: #e0e1e2;
         border: 1px solid #2a3441;
@@ -701,7 +725,7 @@
     .sidebar-header {
         position: sticky;
         top: 0;
-        background: #151a23;
+        background: transparent;
         padding: 0.5rem 0;
         margin-bottom: 1.5rem;
         z-index: 1;
@@ -794,5 +818,25 @@
             width: 240px;
             height: 100dvh;
         }
+    }
+
+    /* Add new style for sidebar button */
+    .sidebar-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        background: #1b2531;
+        border: none;
+        color: #e0e1e2;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        width: 100%;
+        margin-top: 1rem;
+    }
+
+    .sidebar-btn:hover {
+        background: #2a3441;
     }
 </style>
