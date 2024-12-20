@@ -73,7 +73,7 @@ class Configuration:
 class ConfigManager:
     def __init__(self):
         self.config = Configuration()
-        self.config_dir = Path.home() / '.rhea'
+        self.config_dir = Path('.rhea')
         self.config_file = self.config_dir / 'config.json'
         self.profiles_file = self.config_dir / 'profiles.json'
         self._ensure_config_dir()
@@ -136,6 +136,7 @@ class ConfigManager:
     
     def _create_default_files(self) -> None:
         """Create default configuration files if they don't exist."""
+        # Create default config.json
         if not self.config_file.exists():
             default_config = {
                 "model_name": "fluffy/l3-8b-stheno-v3.2:latest",
@@ -146,6 +147,27 @@ class ConfigManager:
             with open(self.config_file, 'w') as f:
                 json.dump(default_config, f, indent=4)
 
+        # Create default profiles.json
+        if not self.profiles_file.exists():
+            default_profiles = {
+                "assistant": {
+                    "name": "Assistant",
+                    "traits": ["helpful", "friendly"],
+                    "backstory": "A helpful AI assistant.",
+                    "goals": "To help users effectively.",
+                    "personality": "Professional and courteous."
+                },
+                "user": {
+                    "name": "User",
+                    "traits": ["human"],
+                    "backstory": "A user of the system.",
+                    "goals": "To interact with the assistant.",
+                    "personality": "Regular user."
+                }
+            }
+            with open(self.profiles_file, 'w') as f:
+                json.dump(default_profiles, f, indent=4)
+
 class ChatManager:
     def __init__(self, model_name: str = "fluffy/l3-8b-stheno-v3.2:latest", 
                  context_limit: int = 5000):
@@ -154,10 +176,16 @@ class ChatManager:
         self.conversation: List[Dict[str, str]] = []
         self.key_events: List[str] = []
         self.character_profiles: Dict[str, CharacterProfile] = {}
-        self.current_user_profile: Optional[CharacterProfile] = None
-        self.current_assistant_profile: Optional[CharacterProfile] = None
-        self.profiles_file = Path.home() / '.rhea' / 'profiles.json'
+        self.profiles_file = Path('.rhea') / 'profiles.json'
+        self.current_assistant_profile = None
+        self.current_user_profile = None
+        print(f"Looking for profiles at: {self.profiles_file}")  # Debug
         self._load_profiles()
+        print(f"Loaded profiles: {list(self.character_profiles.keys())}")  # Debug
+        if 'assistant' in self.character_profiles:
+            self.current_assistant_profile = self.character_profiles['assistant']
+        if 'user' in self.character_profiles:
+            self.current_user_profile = self.character_profiles['user']
         self._initialize_conversation()
         self.message_count = 0
         self.last_cleanup = 0
@@ -232,17 +260,26 @@ class ChatManager:
     def _load_profiles(self) -> None:
         """Load character profiles from file."""
         if self.profiles_file.exists():
+            print(f"Found profiles file at {self.profiles_file}")  # Debug
             try:
-                with open(self.profiles_file, 'r') as f:
+                with open(self.profiles_file, 'r', encoding='utf-8') as f:
                     profiles_data = json.load(f)
+                    print(f"Loaded profiles data: {profiles_data}")  # Debug
+                    self.character_profiles = {}
                     for role, profile_data in profiles_data.items():
                         self.character_profiles[role] = CharacterProfile(**profile_data)
+                        print(f"Added profile for role: {role}")  # Debug
             except Exception as e:
-                print(f"Error loading profiles: {e}")
+                print(f"Error loading profiles: {str(e)}")
+        else:
+            print(f"No profiles file found at {self.profiles_file}")  # Debug
 
     def _save_profiles(self) -> None:
         """Save character profiles to file."""
         try:
+            # Ensure the directory exists
+            self.profiles_file.parent.mkdir(parents=True, exist_ok=True)
+            
             profiles_data = {
                 role: {
                     'name': profile.name,
@@ -253,16 +290,20 @@ class ChatManager:
                 }
                 for role, profile in self.character_profiles.items()
             }
-            with open(self.profiles_file, 'w') as f:
+            print(f"Saving profiles to {self.profiles_file}")  # Debug
+            print(f"Data to save: {profiles_data}")  # Debug
+            
+            with open(self.profiles_file, 'w', encoding='utf-8') as f:
                 json.dump(profiles_data, f, indent=4)
+            print("Profiles saved successfully")  # Debug
         except Exception as e:
-            print(f"Error saving profiles: {e}")
+            print(f"Error saving profiles: {str(e)}")
 
     def add_character_profile(self, role: str, profile: CharacterProfile) -> None:
         """Add a character profile and save to file."""
+        print(f"Adding new profile for role: {role}")  # Debug
         self.character_profiles[role] = profile
         self._save_profiles()
-        print(f"Added profile for {role}: {profile.name}")
 
     def set_current_profiles(self, user_role: str, assistant_role: str) -> None:
         """Set the current user and assistant profiles."""
@@ -428,29 +469,35 @@ def manage_profiles(chat_manager: ChatManager, console: Console) -> None:
             break
 
 def select_characters(chat_manager: ChatManager, console: Console) -> tuple[str, str]:
-    """Automatically set up the characters from profiles.json"""
+    """Allow user to select characters from available profiles"""
     console.clear()
-    console.print("[bold blue]Loading Character Profiles[/bold blue]\n")
+    console.print("[bold blue]Character Selection[/bold blue]\n")
     
     if not chat_manager.character_profiles:
-        console.print("[yellow]No character profiles found in .rhea/profiles.json[/yellow]")
-        return "none", "none"
+        console.print("[yellow]No character profiles found. Please create profiles first.[/yellow]")
+        return None, None
     
-    # Automatically set roles from profiles.json
-    user_role = "user"
-    assistant_role = "assistant"
+    # Show available profiles
+    console.print("Available profiles:")
+    for role, profile in chat_manager.character_profiles.items():
+        console.print(f"{role}: {profile.name}")
+    
+    # Let user select profiles
+    user_role = Prompt.ask("\nSelect user profile", 
+                          choices=list(chat_manager.character_profiles.keys()))
+    assistant_role = Prompt.ask("Select assistant profile", 
+                              choices=list(chat_manager.character_profiles.keys()))
     
     chat_manager.set_current_profiles(user_role, assistant_role)
     
     if chat_manager.current_assistant_profile and chat_manager.current_user_profile:
-        console.print("\n[green]Characters loaded successfully:[/green]")
+        console.print("\n[green]Characters selected successfully:[/green]")
         console.print(f"AI is playing as: [bold]{chat_manager.current_assistant_profile.name}[/bold]")
         console.print(f"You are playing as: [bold]{chat_manager.current_user_profile.name}[/bold]")
     else:
-        console.print("[red]Error loading character profiles[/red]")
+        console.print("[red]Error setting up characters[/red]")
         
     Prompt.ask("\nPress Enter to continue")
-    
     return user_role, assistant_role
 
 def format_streaming_text(text: str) -> str:
@@ -474,6 +521,11 @@ def format_streaming_text(text: str) -> str:
 
 def run_chat(interface: ChatInterface, chat_manager: ChatManager, config: Configuration) -> None:
     user_role, assistant_role = select_characters(chat_manager, interface.console)
+    if user_role is None or assistant_role is None:
+        interface.console.print("[red]Cannot start chat without character profiles.[/red]")
+        Prompt.ask("\nPress Enter to return to menu")
+        return
+        
     chat_manager.set_current_profiles(user_role, assistant_role)
     
     welcome_msg = f"""Welcome to a conversation with {chat_manager.current_assistant_profile.name if chat_manager.current_assistant_profile else 'AI'}
@@ -589,6 +641,11 @@ def main():
         
         if choice == "1":
             # Start chat
+            if not chat_manager.character_profiles:
+                console.print("[yellow]No character profiles found. Please create profiles first.[/yellow]")
+                Prompt.ask("\nPress Enter to continue")
+                continue
+                
             interface = ChatInterface(chat_manager)
             try:
                 run_chat(interface, chat_manager, config_manager.config)
